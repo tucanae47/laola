@@ -29,7 +29,7 @@ class DDS(Elaboratable):
         self.phase_accumulator = nm.Signal(phase_bits)
         
         # Frequency control (phase increment)
-        self.freq_control = Signal(freq_bits)
+        self.freq = Signal(freq_bits)
 
         # Output of the DDS
         self.dds_output = Signal(lut_bits)
@@ -53,10 +53,10 @@ class DDS(Elaboratable):
         data = Signal(self.lut_bits)
         read_port = self.lut.read_port()
         m.submodules += read_port
-        # Increment the phase accumulator
-        m.d.sync += self.phase_accumulator.eq(self.phase_accumulator + self.freq_control)
+        m.d.sync += self.phase_accumulator.eq(self.phase_accumulator + self.freq)
+        # Add delayed signal for the phase accum
         m.d.sync += acum.eq(self.phase_accumulator)
-
+        # Quadrant is always the 2 MSB bits of the phase acummulator
         m.d.sync += self.quadrant.eq(self.phase_accumulator[self.phase_bits-2:]) 
 
         with m.Switch(self.quadrant):
@@ -67,23 +67,30 @@ class DDS(Elaboratable):
                 m.d.sync += data.eq(read_port.data)
             with m.Case(1):
                 m.d.sync += theta.eq(self.PI - (acum[:len(read_port.addr)]))
+                # normalize theta
                 m.d.sync += self.index.eq(theta & self.mask)
-                with m.If(self.index >= (self.index_size- self.freq_control)):
-                    m.d.sync += self.index.eq(self.index - self.freq_control)
+                # same as int((theta / (np.pi / 2)) * len(lut))
+                # m.d.sync += self.index.eq((theta << self.lut_bits - 1) >> (self.lut_bits - 1))
+                with m.If(self.index >= (self.index_size- self.freq)):
+                    m.d.sync += self.index.eq(self.index - self.freq)
                 m.d.sync += read_port.addr.eq(self.index)
                 m.d.sync += data.eq(read_port.data)
             with m.Case(2):
                 m.d.sync += theta.eq(acum[:len(read_port.addr)] -self.PI)
+                # normalize theta
                 m.d.sync += self.index.eq(theta & self.mask)
-                with m.If(self.index >= (self.index_size- self.freq_control)):
-                    m.d.sync += self.index.eq(self.index - self.freq_control)
+                # m.d.sync += self.index.eq((theta << self.lut_bits - 1) >> (self.lut_bits - 1))
+                with m.If(self.index >= (self.index_size- self.freq)):
+                    m.d.sync += self.index.eq(self.index - self.freq)
                 m.d.sync += read_port.addr.eq((self.index))
                 m.d.sync += data.eq(-read_port.data + (1 << self.lut_bits))
             with m.Case(3):
                 m.d.sync += theta.eq(self.PI + self.PI - acum[:len(read_port.addr)])
+                # normalize theta
                 m.d.sync += self.index.eq(theta & self.mask)
-                with m.If(self.index >= (self.index_size - self.freq_control )):
-                    m.d.sync += self.index.eq(self.index - self.freq_control)
+                # m.d.sync += self.index.eq((theta << self.lut_bits - 1) >> (self.lut_bits - 1))
+                with m.If(self.index >= (self.index_size - self.freq )):
+                    m.d.sync += self.index.eq(self.index - self.freq)
                 m.d.sync += read_port.addr.eq(self.index)
                 m.d.sync += data.eq(-read_port.data + (1 << self.lut_bits))
 
@@ -95,27 +102,27 @@ def test():
     phase_bits = 14
     dut = DDS(phase_bits=phase_bits, lut_bits=phase_bits - 2, freq_bits=14)
     def bench():
-        # yield dut.freq_control.eq(10)
+        # yield dut.freq.eq(10)
         for i in range(1,6):
-            yield dut.freq_control.eq(1*i)
+            yield dut.freq.eq(1*i)
             for ph in range(16384):
                 yield dut.dds_output
                 yield
-            # yield dut.freq_control.eq(2)
+            # yield dut.freq.eq(2)
             yield
 
     sim = Simulator(dut)
     sim.add_clock(1e-6) # 1 MHz
     sim.add_sync_process(bench)
 
-    with sim.write_vcd("dds4.vcd", traces=[dut.phase_accumulator, dut.freq_control, dut.dds_output, dut.quadrant, dut.index]):
-    # with sim.write_vcd("dds4.vcd", gtkw_file= open("dds4.gtkw", "w"), traces=[dut.phase_accumulator, dut.freq_control, dut.dds_output, dut.quadrant, dut.index]):
+    # with sim.write_vcd("dds4.vcd", traces=[dut.phase_accumulator, dut.freq, dut.dds_output, dut.quadrant, dut.index]):
+    with sim.write_vcd("dds4.vcd", gtkw_file= open("dds4.gtkw", "w"), traces=[dut.phase_accumulator, dut.freq, dut.dds_output, dut.quadrant, dut.index]):
         sim.run()
 
 if __name__ == "__main__":
     dut = DDS(phase_bits=14, lut_bits=14, freq_bits=14)
     # dut = DDS(16,16)
     v = verilog.convert(
-        dut, name="dds", ports=[dut.phase_accumulator, dut.freq_control, dut.dds_output],
+        dut, name="dds", ports=[dut.phase_accumulator, dut.freq, dut.dds_output],
         emit_src=False, strip_internal_attrs=True)
     print(v)
