@@ -41,6 +41,7 @@ class DDS(Elaboratable):
         self.FULL = 1 << (lut_bits)
         self.index = Signal(lut_bits)
         self.lut_size = 2**lut_bits
+        self.mask  = (1 << self.lut_bits) - 1  # Creates a mask with lower lut_bits bits set to 1
 
         # Internal LUT for the sine wave
         self.lut = self.create_sine_lut(lut_bits, self.lut_size)
@@ -52,7 +53,6 @@ class DDS(Elaboratable):
         data = Signal(self.lut_bits)
         read_port = self.lut.read_port()
         m.submodules += read_port
-
         # Increment the phase accumulator
         m.d.sync += self.phase_accumulator.eq(self.phase_accumulator + self.freq_control)
         m.d.sync += acum.eq(self.phase_accumulator)
@@ -67,27 +67,27 @@ class DDS(Elaboratable):
                 m.d.sync += data.eq(read_port.data)
             with m.Case(1):
                 m.d.sync += theta.eq(self.PI - (acum[:len(read_port.addr)]))
-                m.d.sync += self.index.eq((theta << self.lut_bits - 1) >> (self.lut_bits - 1))
+                m.d.sync += self.index.eq(theta & self.mask)
                 with m.If(self.index >= (self.index_size- self.freq_control)):
                     m.d.sync += self.index.eq(self.index - self.freq_control)
                 m.d.sync += read_port.addr.eq(self.index)
                 m.d.sync += data.eq(read_port.data)
             with m.Case(2):
                 m.d.sync += theta.eq(acum[:len(read_port.addr)] -self.PI)
-                m.d.sync += self.index.eq((theta << self.lut_bits - 1) >> (self.lut_bits - 1))
+                m.d.sync += self.index.eq(theta & self.mask)
                 with m.If(self.index >= (self.index_size- self.freq_control)):
                     m.d.sync += self.index.eq(self.index - self.freq_control)
                 m.d.sync += read_port.addr.eq((self.index))
                 m.d.sync += data.eq(-read_port.data + (1 << self.lut_bits))
             with m.Case(3):
                 m.d.sync += theta.eq(self.PI + self.PI - acum[:len(read_port.addr)])
-                m.d.sync += self.index.eq((theta << self.lut_bits - 1) >> (self.lut_bits - 1))
+                m.d.sync += self.index.eq(theta & self.mask)
                 with m.If(self.index >= (self.index_size - self.freq_control )):
                     m.d.sync += self.index.eq(self.index - self.freq_control)
                 m.d.sync += read_port.addr.eq(self.index)
                 m.d.sync += data.eq(-read_port.data + (1 << self.lut_bits))
 
-        m.d.comb += self.dds_output.eq(data)
+        m.d.sync += self.dds_output.eq(data)
         return m
 
         
@@ -96,9 +96,9 @@ def test():
     dut = DDS(phase_bits=phase_bits, lut_bits=phase_bits - 2, freq_bits=14)
     def bench():
         # yield dut.freq_control.eq(10)
-        for i in range(1,10):
+        for i in range(1,6):
             yield dut.freq_control.eq(1*i)
-            for ph in range(8196):
+            for ph in range(16384):
                 yield dut.dds_output
                 yield
             # yield dut.freq_control.eq(2)
