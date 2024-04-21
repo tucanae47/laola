@@ -13,8 +13,10 @@ import numpy as np
 
 # this is leider needed because the simulator cant recurse so deep and its a known issue with pysim afaik
 import sys
-sys.setrecursionlimit(100000)
+sys.setrecursionlimit(900000000)
 
+phase_bits = 16
+lut_bits = 14
 class DDS(Elaboratable):
 
     def create_sine_lut(self, lut_bits, lut_size):
@@ -49,61 +51,60 @@ class DDS(Elaboratable):
     def elaborate(self, platform):
         m = nm.Module()
         theta = Signal.like(self.phase_accumulator)
-        acum = Signal.like(self.phase_accumulator)
+        # acum = Signal.like(self.phase_accumulator)
         data = Signal(self.lut_bits)
         read_port = self.lut.read_port()
         m.submodules += read_port
         m.d.sync += self.phase_accumulator.eq(self.phase_accumulator + self.freq)
         # Add delayed signal for the phase accum
-        m.d.sync += acum.eq(self.phase_accumulator)
+        # m.d.sync += acum.eq(self.phase_accumulator)
         # Quadrant is always the 2 MSB bits of the phase acummulator
-        m.d.sync += self.quadrant.eq(self.phase_accumulator[self.phase_bits-2:]) 
+        m.d.comb += self.quadrant.eq(self.phase_accumulator[self.phase_bits-2:]) 
 
         with m.Switch(self.quadrant):
             with m.Case(0):
-                m.d.sync += theta.eq(acum[:len(read_port.addr)])
+                m.d.sync += theta.eq(self.phase_accumulator[:len(read_port.addr)])
                 m.d.sync += self.index.eq(theta)
-                m.d.sync += read_port.addr.eq(self.index)
-                m.d.sync += data.eq(read_port.data)
+                m.d.comb += read_port.addr.eq(self.index)
+                m.d.comb += data.eq(read_port.data)
             with m.Case(1):
-                m.d.sync += theta.eq(self.PI - (acum[:len(read_port.addr)]))
+                m.d.sync += theta.eq(self.PI - (self.phase_accumulator[:len(read_port.addr)]))
                 # normalize theta
                 m.d.sync += self.index.eq(theta & self.mask)
                 # same as int((theta / (np.pi / 2)) * len(lut))
                 # m.d.sync += self.index.eq((theta << self.lut_bits - 1) >> (self.lut_bits - 1))
                 with m.If(self.index >= (self.index_size- self.freq)):
                     m.d.sync += self.index.eq(self.index - self.freq)
-                m.d.sync += read_port.addr.eq(self.index)
-                m.d.sync += data.eq(read_port.data)
+                m.d.comb += read_port.addr.eq(self.index)
+                m.d.comb += data.eq(read_port.data)
             with m.Case(2):
-                m.d.sync += theta.eq(acum[:len(read_port.addr)] -self.PI)
+                m.d.sync += theta.eq(self.phase_accumulator[:len(read_port.addr)] -self.PI)
                 # normalize theta
                 m.d.sync += self.index.eq(theta & self.mask)
                 # m.d.sync += self.index.eq((theta << self.lut_bits - 1) >> (self.lut_bits - 1))
                 with m.If(self.index >= (self.index_size- self.freq)):
                     m.d.sync += self.index.eq(self.index - self.freq)
-                m.d.sync += read_port.addr.eq((self.index))
-                m.d.sync += data.eq(-read_port.data + (1 << self.lut_bits))
+                m.d.comb += read_port.addr.eq((self.index))
+                m.d.comb += data.eq(-read_port.data + (1 << self.lut_bits))
             with m.Case(3):
-                m.d.sync += theta.eq(self.PI + self.PI - acum[:len(read_port.addr)])
+                m.d.sync += theta.eq(self.PI + self.PI - self.phase_accumulator[:len(read_port.addr)])
                 # normalize theta
                 m.d.sync += self.index.eq(theta & self.mask)
                 # m.d.sync += self.index.eq((theta << self.lut_bits - 1) >> (self.lut_bits - 1))
                 with m.If(self.index >= (self.index_size - self.freq )):
                     m.d.sync += self.index.eq(self.index - self.freq)
-                m.d.sync += read_port.addr.eq(self.index)
-                m.d.sync += data.eq(-read_port.data + (1 << self.lut_bits))
+                m.d.comb += read_port.addr.eq(self.index)
+                m.d.comb += data.eq(-read_port.data + (1 << self.lut_bits))
 
-        m.d.sync += self.dds_output.eq(data)
+        m.d.comb += self.dds_output.eq(data)
         return m
 
         
 def test():
-    phase_bits = 14
-    dut = DDS(phase_bits=phase_bits, lut_bits=phase_bits - 2, freq_bits=14)
+    dut = DDS(phase_bits=phase_bits, lut_bits=lut_bits, freq_bits=phase_bits)
     def bench():
         # yield dut.freq.eq(10)
-        for i in range(1,6):
+        for i in range(2,10):
             yield dut.freq.eq(1*i)
             for ph in range(16384):
                 yield dut.dds_output
@@ -120,7 +121,7 @@ def test():
         sim.run()
 
 if __name__ == "__main__":
-    dut = DDS(phase_bits=14, lut_bits=14, freq_bits=14)
+    dut = DDS(phase_bits=phase_bits, lut_bits=phase_bits - 2, freq_bits=14)
     # dut = DDS(16,16)
     v = verilog.convert(
         dut, name="dds", ports=[dut.phase_accumulator, dut.freq, dut.dds_output],
