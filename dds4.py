@@ -5,6 +5,7 @@ from amaranth.hdl.rec import Record
 from amaranth.hdl.ast import *
 from amaranth.back import verilog
 from amaranth.sim import Simulator
+# from amaranth.lib.coding import PriorityEncoder
 
 from amaranth.sim import *
 
@@ -15,7 +16,24 @@ import numpy as np
 import sys
 sys.setrecursionlimit(900000000)
 
-phase_bits = 16
+# taken from amaranth.lib.coding but modified to change to MSB
+class PriorityEncoder(Elaboratable):
+    def __init__(self, width):
+        self.width = width
+
+        self.i = Signal(width)
+        self.o = Signal(range(width))
+        self.n = Signal()
+
+    def elaborate(self, platform):
+        m = Module()
+        for j in range(self.width):
+            with m.If(self.i[j]):
+                m.d.comb += self.o.eq(j)
+        m.d.comb += self.n.eq(self.i == 0)
+        return m
+
+phase_bits = 27
 lut_bits = 14
 class DDS(Elaboratable):
 
@@ -33,9 +51,11 @@ class DDS(Elaboratable):
         # Frequency control (phase increment)
         self.freq = Signal(freq_bits)
 
+        self.freq_last = Signal.like(self.freq)
         # Output of the DDS
         self.dds_output = Signal(lut_bits)
-        self.quadrant = Signal(2)
+        self.quadrant = Signal(lut_bits)
+        # self.debug = Signal(phase_bits)
         self.lut_bits = lut_bits
         self.phase_bits = phase_bits
         self.index_size = (1<< (lut_bits)) 
@@ -51,15 +71,21 @@ class DDS(Elaboratable):
     def elaborate(self, platform):
         m = nm.Module()
         theta = Signal.like(self.phase_accumulator)
-        # acum = Signal.like(self.phase_accumulator)
         data = Signal(self.lut_bits)
         read_port = self.lut.read_port()
         m.submodules += read_port
-        m.d.sync += self.phase_accumulator.eq(self.phase_accumulator + self.freq)
+        # enc = m.submodules.enc =  PriorityEncoder(width = self.phase_bits)
+        m.d.sync += self.freq_last.eq(self.freq)
+        
+        with m.If(self.freq != self.freq_last): 
+            m.d.sync += self.phase_accumulator.eq(self.freq)
+        with m.Else():
+            m.d.sync += self.phase_accumulator.eq(self.phase_accumulator + self.freq)
+
         # Add delayed signal for the phase accum
-        # m.d.sync += acum.eq(self.phase_accumulator)
-        # Quadrant is always the 2 MSB bits of the phase acummulator
-        m.d.comb += self.quadrant.eq(self.phase_accumulator[self.phase_bits-2:]) 
+        # m.d.comb += factor.eq((Const(self.lut_size) // self.freq) * 4)
+        # m.d.comb += enc.i.eq(factor)
+        m.d.comb += self.quadrant.eq(self.phase_accumulator[self.lut_bits:self.lut_bits+2]) 
 
         with m.Switch(self.quadrant):
             with m.Case(0):
@@ -103,27 +129,31 @@ class DDS(Elaboratable):
 def test():
     dut = DDS(phase_bits=phase_bits, lut_bits=lut_bits, freq_bits=phase_bits)
     def bench():
-        # yield dut.freq.eq(10)
         for i in range(2,10):
-            yield dut.freq.eq(1*i)
+            yield dut.freq.eq(i * 1)
+            upper_range = int((16384 / i) * 4 )
+            for ph in range(upper_range*2):
+                yield dut.dds_output
+                yield
+            yield
+        for i in reversed(range(4,10)):
+            yield dut.freq.eq(i*1)
             for ph in range(16384):
                 yield dut.dds_output
                 yield
-            # yield dut.freq.eq(2)
             yield
 
     sim = Simulator(dut)
     sim.add_clock(1e-6) # 1 MHz
     sim.add_sync_process(bench)
 
-    # with sim.write_vcd("dds4.vcd", traces=[dut.phase_accumulator, dut.freq, dut.dds_output, dut.quadrant, dut.index]):
-    with sim.write_vcd("dds4.vcd", gtkw_file= open("dds4.gtkw", "w"), traces=[dut.phase_accumulator, dut.freq, dut.dds_output, dut.quadrant, dut.index]):
+    with sim.write_vcd("dds4.vcd", gtkw_file= open("dds4.gtkw", "w"), traces=[dut.freq_last, dut.phase_accumulator, dut.freq, dut.dds_output, dut.quadrant, dut.index]):
         sim.run()
 
 if __name__ == "__main__":
-    dut = DDS(phase_bits=phase_bits, lut_bits=phase_bits - 2, freq_bits=14)
+    dut = DDS(phase_bits=phase_bits, lut_bits=lut_bits, freq_bits=phase_bits)
     # dut = DDS(16,16)
     v = verilog.convert(
-        dut, name="dds", ports=[dut.phase_accumulator, dut.freq, dut.dds_output],
+        dut, name="dds", ports=[dut.freq, dut.dds_output],
         emit_src=False, strip_internal_attrs=True)
     print(v)

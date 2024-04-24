@@ -54,15 +54,17 @@ class DDS(nm.Elaboratable):
 
 # pytest dds.py
 def test():
-    dut = DDS(phase_bits=14, lut_bits=14, freq_bits=14)
+    dut = DDS(phase_bits=27, lut_bits=14, freq_bits=27)
     def bench():
-        yield dut.freq_control.eq(10)
+        # yield dut.freq_control.eq(10)
         for i in range(1,10):
-            for ph in range(1024):
+            yield dut.freq_control.eq(i*1)
+            for ph in range(16384):
+            # for ph in range(1024):
                 yield dut.dds_output
                 yield
-            yield dut.freq_control.eq(10*i)
-            yield
+            # yield dut.freq_control.eq(10*i)
+            # yield
 
     sim = Simulator(dut)
     sim.add_clock(1e-6) # 1 MHz
