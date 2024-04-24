@@ -54,7 +54,7 @@ class DDS(Elaboratable):
         self.freq_last = Signal.like(self.freq)
         # Output of the DDS
         self.dds_output = Signal(lut_bits)
-        self.quadrant = Signal(lut_bits)
+        self.quadrant = Signal(2)
         # self.debug = Signal(phase_bits)
         self.lut_bits = lut_bits
         self.phase_bits = phase_bits

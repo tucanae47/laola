@@ -54,7 +54,6 @@ class DDS(nm.Elaboratable):
 
 # pytest dds.py
 def test():
-    dut = DDS(phase_bits=27, lut_bits=14, freq_bits=27)
     def bench():
         # yield dut.freq_control.eq(10)
         for i in range(1,10):
