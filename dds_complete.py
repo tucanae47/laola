@@ -41,7 +41,9 @@ class DDS(Elaboratable):
         # Generate a sine wave LUT
         # lut_size_quarter = lut_size // 4
         # lut_gen = [int((np.sin(2 * np.pi * i / lut_size) + 1) * (2**(lut_bits - 1) - 1)) for i in range(lut_size)]
-        lut_gen =[int((np.sin(np.pi / 2 * i / lut_size) + 1) * (2**(lut_bits - 1) - 1)) for i in range(lut_size)]
+        lut_gen = [int((np.sin(2 * np.pi * i / lut_size) + 1) * (2**(lut_bits - 1) - 1)) for i in range(lut_size)]
+
+        # lut_gen =[int((np.sin(np.pi / 2 * i / lut_size) + 1) * (2**(lut_bits - 1) - 1)) for i in range(lut_size)]
         return Memory(width=lut_bits, depth=lut_size, init=lut_gen)
 
     def __init__(self, phase_bits=32, lut_bits=10, freq_bits=32):
@@ -87,63 +89,37 @@ class DDS(Elaboratable):
         # Add delayed signal for the phase accum
         # m.d.comb += factor.eq((Const(self.lut_size) // self.freq) * 4)
         # m.d.comb += enc.i.eq(factor)
-        m.d.comb += self.quadrant.eq(self.phase_accumulator[self.lut_bits:self.lut_bits+2]) 
+        # m.d.sync += theta.eq(self.phase_accumulator[len(read_port.addr):])
 
-        with m.Switch(self.quadrant):
-            with m.Case(0):
-                m.d.sync += theta.eq(self.phase_accumulator[:len(read_port.addr)+2])
-                m.d.sync += self.index.eq(theta)
-                m.d.comb += read_port.addr.eq(self.index)
-                m.d.comb += data.eq(read_port.data)
-            with m.Case(1):
-                m.d.sync += theta.eq(self.PI - (self.phase_accumulator[:len(read_port.addr)+2]))
-                # normalize theta
-                m.d.sync += self.index.eq(theta & self.mask)
-                # same as int((theta / (np.pi / 2)) * len(lut))
-                # m.d.sync += self.index.eq((theta << self.lut_bits - 1) >> (self.lut_bits - 1))
-                with m.If(self.index >= (self.index_size- self.freq)):
-                    m.d.sync += self.index.eq(self.index - self.freq)
-                m.d.comb += read_port.addr.eq(self.index)
-                m.d.comb += data.eq(read_port.data)
-            with m.Case(2):
-                m.d.sync += theta.eq(self.phase_accumulator[:len(read_port.addr)+2] -self.PI)
-                # normalize theta
-                m.d.sync += self.index.eq(theta & self.mask)
-                # m.d.sync += self.index.eq((theta << self.lut_bits - 1) >> (self.lut_bits - 1))
-                with m.If(self.index >= (self.index_size- self.freq)):
-                    m.d.sync += self.index.eq(self.index - self.freq)
-                m.d.comb += read_port.addr.eq((self.index))
-                m.d.comb += data.eq(-read_port.data + (1 << self.lut_bits))
-            with m.Case(3):
-                m.d.sync += theta.eq(self.PI + self.PI - self.phase_accumulator[:len(read_port.addr+2)])
-                # normalize theta
-                m.d.sync += self.index.eq(theta & self.mask)
-                # m.d.sync += self.index.eq((theta << self.lut_bits - 1) >> (self.lut_bits - 1))
-                with m.If(self.index >= (self.index_size - self.freq )):
-                    m.d.sync += self.index.eq(self.index - self.freq)
-                m.d.comb += read_port.addr.eq(self.index)
-                m.d.comb += data.eq(-read_port.data + (1 << self.lut_bits))
-
+        m.d.sync += theta.eq(self.phase_accumulator[-len(read_port.addr):])
+        m.d.sync += self.index.eq(theta)
+        m.d.comb += read_port.addr.eq(self.index)
+        m.d.comb += data.eq(read_port.data)
         m.d.comb += self.dds_output.eq(data)
+        # m.d.comb += [
+        #     read_port.addr.eq(self.theta),
+        #     self.dds_output.eq(read_port.data)
+        # ]
         return m
 
         
 def test():
     dut = DDS(phase_bits=phase_bits, lut_bits=lut_bits, freq_bits=phase_bits)
     def bench():
-        for i in range(2,10):
-            yield dut.freq.eq(i * 1)
-            upper_range = int((16384 / i) * 4 )
-            for ph in range(upper_range*2):
+        for i in range(2,3):
+            yield dut.freq.eq(i * 4000)
+            upper_range = 16384
+            # upper_range = int((16384 / i) * 4 )
+            for ph in range(upper_range*10):
                 yield dut.dds_output
                 yield
             yield
-        for i in reversed(range(4,10)):
-            yield dut.freq.eq(i*1)
-            for ph in range(16384):
-                yield dut.dds_output
-                yield
-            yield
+        # for i in reversed(range(4,10)):
+        #     yield dut.freq.eq(i*1)
+        #     for ph in range(16384):
+        #         yield dut.dds_output
+        #         yield
+        #     yield
 
     sim = Simulator(dut)
     sim.add_clock(1e-6) # 1 MHz
@@ -156,6 +132,6 @@ if __name__ == "__main__":
     dut = DDS(phase_bits=phase_bits, lut_bits=lut_bits, freq_bits=phase_bits)
     # dut = DDS(16,16)
     v = verilog.convert(
-        dut, name="dds4", ports=[dut.freq, dut.dds_output],
+        dut, name="dds", ports=[dut.freq, dut.dds_output],
         emit_src=False, strip_internal_attrs=True)
     print(v)

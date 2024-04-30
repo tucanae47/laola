@@ -57,7 +57,7 @@ def test():
     def bench():
         # yield dut.freq_control.eq(10)
         for i in range(1,10):
-            yield dut.freq_control.eq(i*1)
+            yield dut.freq_control.eq(i*10)
             for ph in range(16384):
             # for ph in range(1024):
                 yield dut.dds_output
