@@ -19,9 +19,9 @@ class SUM(Elaboratable):
 
     def __init__(self):
         # Inputs
-        self.in_1 = Signal(14)
-        self.in_2 = Signal(14)
-        self.out_1 = Signal(14)
+        self.in_1 = Signal(lut_bits)
+        self.in_2 = Signal(lut_bits)
+        self.out_1 = Signal(lut_bits)
 
     def elaborate(self, platform):
         m = Module()
@@ -53,9 +53,10 @@ class DDS(Elaboratable):
         # Generate a sine wave LUT
         # lut_size_quarter = lut_size // 4
         # lut_gen = [int((np.sin(2 * np.pi * i / lut_size) + 1) * (2**(lut_bits - 1) - 1)) for i in range(lut_size)]
-        # lut_gen = [int((np.sin(2 * np.pi * i / lut_size) + 1) * (2**(lut_bits - 1) - 1)) for i in range(lut_size)]
-        lut_gen = [int((np.sin(2 * np.pi * i / lut_size) + 1) * (2**(8 - 1) - 1)) for i in range(lut_size)]
-
+        lut_gen = [int((np.sin(2 * np.pi * i / lut_size) + 1) * (2**(lut_bits - 1) - 1)) for i in range(lut_size)]
+        # lut_gen = [int((np.cos(2 * np.pi * i / lut_size) + 1) * (2**(10 - 1) - 1)) for i in range(lut_size)]
+        # lut_gen = [(np.sin(2 * np.pi * i / lut_size) + 1) / 2 for i in range(lut_size)]
+        # Assume precision is the number of decimal places you want to keep
         # lut_gen =[int((np.sin(np.pi / 2 * i / lut_size) + 1) * (2**(lut_bits - 1) - 1)) for i in range(lut_size)]
         return Memory(width=lut_bits, depth=lut_size, init=lut_gen)
 
@@ -72,7 +73,7 @@ class DDS(Elaboratable):
         self.dds_output = Signal(lut_bits)
         self.phase_offset = Signal(lut_bits)
         self.offset_last = Signal.like(self.phase_offset)
-        self.amplitude = Signal(12)
+        self.amplitude = Signal(lut_bits)
         self.quadrant = Signal(2)
         # self.debug = Signal(phase_bits)
         self.lut_bits = lut_bits
@@ -90,16 +91,15 @@ class DDS(Elaboratable):
     def elaborate(self, platform):
         m = nm.Module()
         theta = Signal.like(self.phase_accumulator)
+
         data = Signal(self.lut_bits)
         read_port = self.lut.read_port()
         m.submodules += read_port
-        mulbuff = Signal.like(data + 12)
+        mulbuff = Signal((self.lut_bits * 2) - 1)
         # enc = m.submodules.enc =  PriorityEncoder(width = self.phase_bits)
         m.d.sync += self.freq_last.eq(self.freq)
         m.d.sync += self.offset_last.eq(self.phase_offset)
-        initial_phase_set = Signal(reset=0)  # Flag to apply phase offset once or conditionally
-        
-        # Conditional application of phase offset
+
         with m.If(self.phase_offset != self.offset_last): 
             m.d.sync += self.phase_accumulator.eq(self.phase_accumulator + self.phase_offset)
 
@@ -113,7 +113,17 @@ class DDS(Elaboratable):
         m.d.sync += self.index.eq(theta)
         m.d.comb += read_port.addr.eq(self.index)
         m.d.comb += mulbuff.eq(read_port.data * self.amplitude)
-        m.d.comb += self.dds_output.eq(mulbuff[:self.lut_bits])
+        # m.d.comb += self.dds_output.eq(mulbuff>>(lut_bits))
+        m.d.comb += self.dds_output.eq(mulbuff[self.lut_bits-1:])
+        # m.d.comb += self.dds_output.eq(mulbuff)
+        # m.d.comb += self.dds_output.eq(read_port.data)
+
+        # m.submodules+= Instance("mult_0",
+        #     ("i", "A", self.amplitude),
+        #     ("i", "B", read_port.data),
+        #     ("i", "CLK", ClockSignal()),
+        #     ("o", "P", mulbuff)
+        # )
         # m.d.comb += [
         #     read_port.addr.eq(self.theta),
         #     self.dds_output.eq(read_port.data)
@@ -132,20 +142,27 @@ def test():
     m.submodules.f2 = f2
     m.d.comb += dut.in_1.eq(f1.dds_output)
     m.d.comb += dut.in_2.eq(f2.dds_output)
-    m.d.comb +=f1.freq.eq(4000)
-    m.d.comb +=f2.freq.eq(80000)
-    m.d.comb +=f1.amplitude.eq(1)
-    m.d.comb +=f2.amplitude.eq(1)
+    m.d.comb +=f1.freq.eq(80000)
+    m.d.comb +=f2.freq.eq(160000)
+    m.d.comb +=f1.phase_offset.eq(1)
+    m.d.comb +=f2.phase_offset.eq(1)
+    # m.d.comb +=f1.amplitude.eq(1)
+    # m.d.comb +=f2.amplitude.eq(1)
     def bench():
-        for i in range(2,8):
+        for i in range(1, 4):
             # yield f1.freq.eq(i* 10)
             # yield f2.freq.eq(i * 1000)
-            yield f1.phase_offset.eq(i*2)
-            yield f2.phase_offset.eq(i*4)
-            # yield f1.amplitude.eq(2*i)
-            # yield f2.amplitude.eq(4*i)
+            # yield f1.phase_offset.eq(i*2)
+            # yield f2.phase_offset.eq(i*4)
+            a = 1.0 / i;
+            scale_factor = a / ((1<<lut_bits) -1)
+            fixed_point_scale_factor = int(scale_factor * (1 << ((lut_bits*2)-1)))
+
+            yield f1.amplitude.eq(fixed_point_scale_factor)
+            yield f2.amplitude.eq(fixed_point_scale_factor)
             # upper_range = 16384/ 2
-            upper_range = int((16384 / 2))
+            upper_range = 1<< lut_bits
+            # upper_range = int(((1<<10) / 2))
             # upper_range = int((16384 / i) * 4 )
             for ph in range(upper_range):
                 yield dut.out_1
@@ -164,7 +181,7 @@ def test():
 
     # with sim.write_vcd("dds4.vcd", gtkw_file= open("dds4.gtkw", "w"), traces=[dut.freq_last, dut.phase_accumulator, dut.freq, dut.dds_output, dut.quadrant, dut.index]):
         # sim.run()
-    with sim.write_vcd("sum.vcd", "sum.gtkw", traces=[f1.phase_accumulator, f2.phase_accumulator, f1.amplitude, f1.phase_offset, f2.amplitude, f2.phase_offset, dut.in_1, dut.in_2, dut.out_1]):
+    with sim.write_vcd("sum.vcd", "sum.gtkw", traces=[f1.amplitude, f2.amplitude, f1.phase_accumulator, f2.phase_accumulator, f1.phase_offset ,f2.phase_offset, dut.in_1, dut.in_2, dut.out_1]):
         sim.run()
 
 # if __name__ == "__main__":
@@ -186,11 +203,18 @@ def test():
 #         emit_src=False, strip_internal_attrs=True)
 #     print(v)
 
-
 if __name__ == "__main__":
     dut = DDS(phase_bits=phase_bits, lut_bits=lut_bits, freq_bits=phase_bits)
     # dut = DDS(16,16)
     v = verilog.convert(
-        dut, name="dds", ports=[dut.amplitude, dut.phase_offset, dut.freq, dut.dds_output],
+        dut, name="dds2", ports=[dut.amplitude, dut.phase_offset, dut.freq, dut.dds_output],
         emit_src=False, strip_internal_attrs=True)
     print(v)
+
+# if __name__ == "__main__":
+#     dut = DDS(phase_bits=phase_bits, lut_bits=lut_bits, freq_bits=phase_bits)
+#     # dut = DDS(16,16)
+#     v = verilog.convert(
+#         dut, name="dds2cos", ports=[dut.amplitude,dut.phase_offset, dut.freq, dut.dds_output],
+#         emit_src=False, strip_internal_attrs=True)
+#     print(v)
